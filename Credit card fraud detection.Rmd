@@ -1,0 +1,391 @@
+---
+title: "final_new"
+author: "Shali Qian"
+date: "11/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(ggplot2)
+library(tidyverse) 
+library(readr)
+library(tree)
+library(adabag)
+library(rpart)
+library(caret)
+library(rpart.plot)
+```
+load dataset
+```{r}
+creditcard <- read_csv("transactions.csv")
+attach(creditcard)
+head(creditcard)
+
+```
+small_dataset
+```{r}
+# partition data
+df1=creditcard[1:15000,]
+df2=creditcard %>% filter(isFraud>0)
+df=rbind(df1,df2)
+
+#drop nameOrig,nameDest columns
+df <- df[ , -c(4, 7)]
+
+set.seed(1)
+index<- sample(c(1:dim(df)[1]))
+df<- df[index,]
+dim(df)
+
+```
+plotting class of isfraud
+```{r}
+#plotting class of isfraud
+table(df$isFraud)
+barplot(table(df$isFraud),
+main="Class Distributions (0: No Fraud, 1:Fraud)",
+xlab="Class",
+ylab="Count",
+border="red",
+col="red",
+density=10
+)
+```
+distribution of amount
+```{r}
+#histogram
+#hist(df$amount, breaks=100, col="red")
+df$isFraud<-as.factor(df$isFraud)
+ggplot(df,aes(amount)) + geom_histogram(aes(fill=type),color ="black")
+```
+
+```{r}
+ggplot(df,aes(type))+geom_bar(aes(fill=isFraud))
+```
+Its clear from the above plot that all the fraud transactions are either CASH_OUT or TRANSFER type.
+```{r}
+ggplot(data = df, aes(x = factor(isFraud) ,y = log1p(amount), fill = factor(isFraud))) + geom_boxplot(show.legend = FALSE) +labs(title= 'Amount- Boxplot' , x = 'isFraud') +  theme_classic()
+
+```
+The above boxplot shows that the Amount involved in fraud transactions is greater than that of in Non Fraud transactions.
+Missing values
+```{r}
+#View(df)
+sum(is.na(df))#check missing values, it seems like there is no missing values.
+```
+categorical variables
+```{r}
+df$isFraud<-as.factor(df$isFraud)
+df$type<-as.factor(df$type)
+#df$type<-as.numeric(df$type)
+df$isFlaggedFraud<-as.factor(df$isFlaggedFraud)
+df$isFlaggedFraud<-as.numeric(df$isFlaggedFraud)
+```
+encoding dummy variables for transaction type
+```{r}
+#get dummy variable for 'type'
+#install.packages("fastDummies")
+library(fastDummies)
+df <- dummy_cols(df)
+df$isFraud <- as.factor(df$isFraud)
+df <- df[ , -c(2, 15,16)]#delete column"type" and 'isfraud0',''isfraud1'
+head(df)
+```
+```{r}
+str(df)
+```
+train test set split
+```{r}
+smp_siz<- floor(0.6*nrow(df))# creates a value for dividing the data into train and test.
+set.seed(1)
+training = sample(nrow(df),size = smp_siz)# Randomly identifies therows equal to sample size ( defined in previous instruction) from  all the rows of toyota2 dataset and stores the row number in training
+train.df =df[training,]
+valid.df = df[-training,]
+
+```
+## K Nearest Neighbor Classifier
+Prepocess data
+```{r}
+train.norm.df <- train.df
+valid.norm.df <- valid.df
+norm.df <- df
+# standard
+library(caret)
+
+norm.values <- preProcess(train.df[,c(1:7,8:13)], method=c("center", "scale")) 
+norm.values
+train.norm.df[,c(1:7,8:13)] <- predict(norm.values, train.df[,c(1:7,8:13)])
+
+valid.norm.df[,c(1:7,8:13)] <- predict(norm.values, valid.df[,c(1:7,8:13)])
+```
+predict
+```{r}
+# use knn() to compute knn. 
+#install.packages("FNN")
+library(FNN)
+#KNN on the whole dataset
+knn.pred <- knn(train = train.norm.df[, -7], test = valid.norm.df[, -7], 
+          cl = train.norm.df$isFraud, k = 3) 
+confusionMatrix(knn.pred, as.factor(valid.norm.df$isFraud))
+
+
+
+```
+How to pick K?
+```{r}
+# initialize a data frame with two columns: k, and accuracy.
+accuracy.df <- data.frame(k = seq(1, 10, 1), accuracy = rep(0, 10))
+
+# compute knn for different k on validation.
+for(i in 1:10) {
+  knn.pred <- knn(train.df[, -7], valid.df[, -7], 
+                  cl = train.df$isFraud, k = i)
+  accuracy.df[i, 2] <- confusionMatrix(knn.pred, as.factor(valid.df$isFraud))$overall[1] 
+}
+accuracy.df
+```
+
+
+```{r}
+plot(accuracy ~ k, data=accuracy.df, type="l")
+```
+I will choose k =1 as the accuracy is the highest accuracy.
+```{r}
+knn.pred <- knn(train.norm.df[, -7], valid.norm.df[, -7], 
+                cl = train.norm.df$isFraud, k = 1)
+confusionMatrix(knn.pred, as.factor(valid.df$isFraud))
+```
+
+## Logistic Regression
+Partition data
+```{r}
+set.seed(111)
+train.index <- sample(c(1:dim(df)[1]), dim(df)[1]*0.6)  
+train.df <- df[train.index, ]
+valid.df <- df[-train.index, ]
+```
+Logistic regression
+```{r}
+#logistic regression
+glm.fit <- glm(isFraud ~ ., data = train.df, family = "binomial") 
+
+summary(glm.fit)
+#predict fraud
+glm.pred <- predict(glm.fit, valid.df[,-7], type = "response")
+plot(glm.pred)
+
+
+```
+Assessing classification performance
+```{r}
+confusionMatrix(as.factor(ifelse(glm.pred > 0.5, 1, 0)), as.factor(valid.df$isFraud))
+
+#actual and predicted records
+act.pred<-data.frame(actual = valid.df$isFraud, predicted = ifelse(glm.pred > 0.5, 1, 0))
+
+#plot auc
+library(pROC)
+r <- roc(act.pred$actual, act.pred$predicted)
+plot.roc(r)
+auc(r)
+
+#plot pr curve
+library(PRROC)
+pr<-pr.curve(act.pred$actual, act.pred$predicted,curve = TRUE)
+print(pr)
+plot(pr)
+```
+
+## Classification Trees
+```{r}
+set.seed(1) 
+df.ct=creditcard[1:23213,]
+#drop nameOrig,nameDest columns
+df.ct <- df.ct[ , -c(4, 7)]
+
+df.ct$type<- as.factor(df.ct$type)
+df.ct$isFraud<- as.factor(df.ct$isFraud)
+df.ct$isFlaggedFraud<- as.factor(df.ct$isFlaggedFraud)
+```
+
+### Full-grown Tree
+```{r}
+train.index <- sample(c(1:dim(df.ct)[1]), dim(df.ct)[1]*0.7)  
+train.df <- df.ct[train.index, ]
+valid.df <- df.ct[-train.index, ]
+
+#classfication tree
+ct<- rpart(isFraud~., data = train.df,method="class")
+
+#predict probability
+pred_pro_ct <- predict(ct, valid.df)
+pred_pro_ct[1:5,]#show the first five row
+
+#predict point
+ct.point.pred.test <- predict(ct,valid.df,type = "class")
+confusionMatrix(ct.point.pred.test, factor(valid.df$isFraud))
+
+
+# plot tree
+rpart.plot(ct)
+prp(ct, type = 1, extra = 1, under = TRUE, split.font = 1, varlen = -10)
+
+
+summary(ct)
+```
+### Best-pruned Tree
+```{r}
+# cross-validation procedure
+# argument cp sets the smallest value for the complexity parameter.
+set.seed(1)
+cv.ct <- rpart(train.df$isFraud ~ ., data = train.df, method = "class", cp = 0.00001, minsplit = 2, xval = 5)  
+
+printcp(cv.ct)  
+pruned.ct <- prune(cv.ct, cp = 0.0084746)
+prp(pruned.ct, type = 1, extra = 1, under = TRUE, split.font = 1, varlen = -10, 
+    box.col=ifelse(pruned.ct$frame$var == "<leaf>", 'gray', 'white')) 
+
+```
+prune by lower cp
+```{r}
+# prune by lower cp
+pruned.ct <- prune(cv.ct,
+    cp = cv.ct$cptable[which.min(cv.ct$cptable[,"xerror"]),"CP"])
+length(pruned.ct$frame$var[pruned.ct$frame$var == "<leaf>"])
+prp(pruned.ct, type = 1, extra = 1, split.font = 1, varlen = -10)
+
+
+printcp(pruned.ct) 
+```
+apply best pruned tree model
+```{r}
+# apply model on training set
+tree.pred.train <- predict(pruned.ct, train.df, type = "class")
+# generate confusion matrix for training data
+confusionMatrix(tree.pred.train, train.df$isFraud)
+```
+```{r}
+# apply model on test set
+tree.pred.test <- predict(pruned.ct, valid.df, type = "class")
+# generate confusion matrix for test data
+confusionMatrix(tree.pred.test, valid.df$isFraud)
+```
+## random forest &variable importance
+```{r}
+library(randomForest)
+library(caret)
+
+#Convert all character variable into factor in one line:
+train_fac=train.df %>% mutate_if(is.character, as.factor)
+valid_fac=valid.df %>% mutate_if(is.character, as.factor)
+## random forest
+rf <- randomForest(as.factor(isFraud) ~ ., data = train_fac, ntree = 500, 
+                    mtry=8,importance = TRUE) 
+print(rf)
+plot(rf)
+
+## variable importance plot
+importance(rf) 
+varImpPlot(rf, type = 1)
+
+
+#confusion matrix
+rf.pred = predict(rf,valid_fac)
+confusionMatrix(rf.pred,factor(valid.df$isFraud), positive ="1")
+```
+plotting variable importance
+```{r}
+importance_matrix <- data.frame(Variables = rownames(rf$importance), rf$importance, row.names = NULL)
+
+ggplot(data = importance_matrix , aes(y = MeanDecreaseGini , x = Variables, fill = Variables))+ geom_col() + coord_flip() + labs(title= 'Variable importance plot')+ theme_classic()
+
+```
+
+### GBM
+```{r}
+library(gbm)
+set.seed(1)
+boost=gbm(isFraud~.,data=train.df,distribution="gaussian",n.trees=500,interaction.depth=4)
+#feature importance
+summary(boost)
+
+# Plot and calculate AUC on test data
+gbm.test = predict(boost, newdata = valid.df)
+auc.gbm = roc(valid.df$isFraud, gbm.test, plot = TRUE, col = "red")
+print(auc.gbm)
+auc.gbm
+```
+## Neural Nets
+```{r}
+#a balanced dataset dfnn
+library(neuralnet)
+
+train.norm.dfisfraud<- filter(train.norm.df,isFraud==1)[1:50,]
+train.norm.dfisnonfraud<- filter(train.norm.df,isFraud==0)[1:50,]
+train.norm.dfnn<- rbind(train.norm.dfisfraud,train.norm.dfisnonfraud)
+```
+
+```{r}
+train.norm.dfnn$nonfraud <- train.norm.dfnn$isFraud == "0"
+train.norm.dfnn$fraud <- train.norm.dfnn$isFraud == "1"
+
+set.seed(1)
+
+nn <-neuralnet(nonfraud+fraud ~ amount + newbalanceDest +step, data=train.norm.dfnn, linear.output = F, hidden =3)
+
+#display weights
+nn$weights
+
+#display predictions
+prediction(nn)
+
+#plot network
+plot(nn,rep="best")
+
+```
+confusion matrix
+```{r}
+predict <- neuralnet::compute(nn,data.frame(train.norm.dfnn$amount, train.norm.dfnn$newbalanceDest,train.norm.dfnn$step))
+
+predicted.class=apply(predict$net.result,1,which.max)-1 
+
+confusionMatrix(as.factor(ifelse(predicted.class=="1", "1", "0")), as.factor(train.norm.dfnn$isFraud))
+```
+##  Hierarchical Clustering
+```{r}
+df.hc<-df[1:100,]
+set.seed(278613)
+dfH <- hclust(d=dist(df.hc),method = "average")
+plot(dfH, hang=-1, cex=.8, main="Average Linkage Clustering")
+# Select 5 clusters: Draw rectangle on 5 clusters
+rect.hclust(dfH, k=5)
+
+
+
+```
+
+```{r}
+#rmarkdown::render('final_new.rmd', output_format = 'html_document')
+```
+
+
+
+
+
+
+
+
+
+
+
+
